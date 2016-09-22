@@ -15,6 +15,25 @@ logging.basicConfig(format=FORMAT)
 logger = logging.getLogger('testdroid')
 logger.setLevel(logging.INFO)
 
+##################################################
+# SSL
+##################################################
+disable_ssl_verification = os.environ.get("TESTDROID_DISABLE_SSL_VERIFICATION", "0")
+verify_ssl = True
+
+if disable_ssl_verification is "1":
+    verify_ssl = False
+    # Disable SSL verification
+    import ssl
+    try:
+        _create_unverified_https_context = ssl._create_unverified_context
+    except AttributeError:
+        # Legacy Python that doesn't verify HTTPS certificates by default
+        pass
+    else:
+        # Handle target environment that doesn't support HTTPS verification
+        ssl._create_default_https_context = _create_unverified_https_context
+
 
 class RequestTimeout(Exception):
 
@@ -152,7 +171,8 @@ class Testdroid:
             res = requests.post(
                 url,
                 data = payload,
-                headers = { "Accept": "application/json" }
+                headers = { "Accept": "application/json" },
+                verify = verify_ssl
                 )
             if res.status_code not in range(200, 300):
                 raise RequestResponseError(res.text, res.status_code)
@@ -172,7 +192,8 @@ class Testdroid:
             res = requests.post(
                 url,
                 data = payload,
-                headers = { "Accept": "application/json" }
+                headers = { "Accept": "application/json" },
+                verify = verify_ssl
                 )
             if res.status_code not in range(200, 300):
                 print "FAILED: Unable to get a new access token using refresh token"
@@ -200,7 +221,7 @@ class Testdroid:
     def download(self, path=None, filename=None, payload={}, callback=None):
         url = "%s/api/v2/%s" % (self.cloud_url, path)
         try:
-            res = requests.get(url, params=payload, headers=self._build_headers(), stream=True, timeout=(60.0))
+            res = requests.get(url, params=payload, headers=self._build_headers(), stream=True, timeout=(60.0), verify=verify_ssl)
 
             if res.status_code in range(200, 300):
                 logger.info("Downloading %s (%s bytes)" % (filename, res.headers["Content-Length"]))
@@ -239,7 +260,7 @@ class Testdroid:
     def upload(self, path=None, filename=None):
         url = "%s/api/v2/%s" % (self.cloud_url, path)
         files = {'file': open(filename, 'rb')}
-        res = requests.post(url, files=files, headers=self._build_headers())
+        res = requests.post(url, files=files, headers=self._build_headers(), verify=verify_ssl)
         if res.status_code not in range(200, 300):
             raise RequestResponseError(res.text, res.status_code)
 
@@ -252,7 +273,7 @@ class Testdroid:
 
         url = "%s/api/v2/%s" % (self.cloud_url, path)
         headers = dict(self._build_headers().items() + headers.items())
-        res =  requests.get(url, params=payload, headers=headers)
+        res =  requests.get(url, params=payload, headers=headers, verify=verify_ssl)
         if res.status_code not in range(200, 300):
             raise RequestResponseError(res.text, res.status_code)
         logger.debug(res.text)
@@ -266,7 +287,7 @@ class Testdroid:
     def post(self, path=None, payload=None, headers={}):
         headers = dict(self._build_headers().items() + headers.items())
         url = "%s/api/v2/%s?access_token=%s" % (self.cloud_url, path, self.get_token())
-        res = requests.post(url, payload, headers=headers)
+        res = requests.post(url, payload, headers=headers, verify=verify_ssl)
         if res.status_code not in range(200, 300):
             raise RequestResponseError(res.text, res.status_code)
         return res.json()
@@ -276,7 +297,7 @@ class Testdroid:
     def delete(self, path=None, payload=None, headers={}):
         headers = dict(self._build_headers().items() + headers.items())
         url = "%s/api/v2/%s?access_token=%s" % (self.cloud_url, path, self.get_token())
-        res = requests.delete(url, headers=headers)
+        res = requests.delete(url, headers=headers, verify=verify_ssl)
         if res.status_code not in range(200, 300):
             raise RequestResponseError(res.text, res.status_code)
         return res
