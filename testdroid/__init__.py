@@ -110,33 +110,15 @@ class Testdroid:
     url = None
     # Api Key for authentication
     api_key = None
-    # Oauth access token
-    access_token = None
-    # Oauth refresh token
-    refresh_token = None
-    # Unix timestamp (seconds) when token expires
-    token_expiration_time = None
     # Buffer size used for downloads
     download_buffer_size = 65536
     # polling interval when awaiting for test run completion
     polling_interval_mins = 10
 
-    """ Simple constructor, defaults against cloud.testdroid.com
-    """
-    def __init__(self):
-        self.cloud_url="https://cloud.testdroid.com"
-
-    """ Full constructor with username and password
-    """
-    def __init__(self, username=None, password=None, url="https://cloud.testdroid.com", download_buffer_size=65536):
-        self.username = username
-        self.password = password
-        self.cloud_url = url
-        self.download_buffer_size = download_buffer_size
-
-    """ Full constructor with api key
-    """
-    def __init__(self, apikey=None, url="https://cloud.testdroid.com", download_buffer_size=65536):
+    def __init__(self,
+            apikey=os.environ.get('TESTDROID_APIKEY'),
+            url=os.environ.get('TESTDROID_URL', "https://cloud.testdroid.com"),
+            download_buffer_size=65536):
         self.api_key = apikey
         self.cloud_url = url
         self.download_buffer_size = download_buffer_size
@@ -144,77 +126,16 @@ class Testdroid:
     def set_apikey(self, apikey):
         self.api_key = apikey
 
-    def set_username(self, username):
-        self.username = username
-
-    def set_password(self, password):
-        self.password = password
-
     def set_url(self, url):
         self.cloud_url = url
 
     def set_download_buffer_size(self, download_buffer_size):
         self.download_buffer_size = download_buffer_size
 
-    """ Get Oauth2 token
-    """
-    def get_token(self):
-        if not self.access_token:
-            # TODO: refresh
-            url = "%s/oauth/token" % self.cloud_url
-            payload = {
-                "client_id": "testdroid-cloud-api",
-                "grant_type": "password",
-                "username": self.username,
-                "password": self.password
-            }
-            res = requests.post(
-                url,
-                data = payload,
-                headers = { "Accept": "application/json" },
-                verify = verify_ssl
-                )
-            if res.status_code not in range(200, 300):
-                raise RequestResponseError(res.text, res.status_code)
-
-            reply = res.json()
-
-            self.access_token = reply['access_token']
-            self.refresh_token = reply['refresh_token']
-            self.token_expiration_time = time.time() + reply['expires_in']
-        elif self.token_expiration_time < time.time():
-            url = "%s/oauth/token" % self.cloud_url
-            payload = {
-                "client_id": "testdroid-cloud-api",
-                "grant_type": "refresh_token",
-                "refresh_token": self.refresh_token
-            }
-            res = requests.post(
-                url,
-                data = payload,
-                headers = { "Accept": "application/json" },
-                verify = verify_ssl
-                )
-            if res.status_code not in range(200, 300):
-                print "FAILED: Unable to get a new access token using refresh token"
-                self.access_token = None
-                return self.get_token()
-
-            reply = res.json()
-
-            self.access_token = reply['access_token']
-            self.refresh_token = reply['refresh_token']
-            self.token_expiration_time = time.time() + reply['expires_in']
-
-        return self.access_token
-
     """ Helper method for getting necessary headers to use for API calls, including authentication
     """
     def _build_headers(self):
-        if self.api_key:
-            return {'Authorization' : 'Basic %s' % base64.b64encode(self.api_key+":"), 'Accept' : 'application/json' }
-        else:
-            return { 'Authorization': 'Bearer %s' % self.get_token(), 'Accept': 'application/json' }
+        return {'Authorization' : 'Basic %s' % base64.b64encode(self.api_key+":"), 'Accept' : 'application/json' }
 
     """ Download file from API resource
     """
@@ -286,7 +207,7 @@ class Testdroid:
     """
     def post(self, path=None, payload=None, headers={}):
         headers = dict(self._build_headers().items() + headers.items())
-        url = "%s/api/v2/%s?access_token=%s" % (self.cloud_url, path, self.get_token())
+        url = "%s/api/v2/%s" % (self.cloud_url, path)
         res = requests.post(url, payload, headers=headers, verify=verify_ssl)
         if res.status_code not in range(200, 300):
             raise RequestResponseError(res.text, res.status_code)
@@ -296,7 +217,7 @@ class Testdroid:
     """
     def delete(self, path=None, payload=None, headers={}):
         headers = dict(self._build_headers().items() + headers.items())
-        url = "%s/api/v2/%s?access_token=%s" % (self.cloud_url, path, self.get_token())
+        url = "%s/api/v2/%s" % (self.cloud_url, path)
         res = requests.delete(url, headers=headers, verify=verify_ssl)
         if res.status_code not in range(200, 300):
             raise RequestResponseError(res.text, res.status_code)
@@ -508,13 +429,6 @@ class Testdroid:
             print "Awaiting completion of test run with id %s. Will wait forever polling every %smins." % (test_run_id, Testdroid.polling_interval_mins)
             while True:
                 time.sleep(Testdroid.polling_interval_mins*60)
-                self.access_token = None    #WORKAROUND: access token thinks it's still valid,
-                                            # > token valid for another 633.357925177
-                                            #whilst this happens:
-                                            # > Couldn't establish the state of the test run with id: 72593732. Aborting
-                                            # > {u'error_description': u'Invalid access token: b3e62604-9d2a-49dc-88f5-89786ff5a6b6', u'error': u'invalid_token'}
-
-                self.get_token()            #in case it expired
                 testRunStatus = self.get_test_run(project_id, test_run_id)
                 if testRunStatus and testRunStatus.has_key('state'):
                     if testRunStatus['state'] == "FINISHED":
@@ -704,10 +618,6 @@ Commands:
         parser = MyParser(usage=usage, description=description, epilog=epilog,  version="%s %s" % ("%prog", __version__))
         parser.add_option("-k", "--apikey", dest="apikey",
                           help="API key - the API key for Testdroid Cloud. Optional. You can use environment variable TESTDROID_APIKEY as well.")
-        parser.add_option("-u", "--username", dest="username",
-                          help="Username - the email address. Optional. You can use environment variable TESTDROID_USERNAME as well.")
-        parser.add_option("-p", "--password", dest="password",
-                          help="Password. Required if username is used. You can use environment variable TESTDROID_PASSWORD as well.")
         parser.add_option("-c", "--url", dest="url", default="https://cloud.testdroid.com",
                           help="Cloud endpoint. Default is https://cloud.testdroid.com. You can use environment variable TESTDROID_URL as well.")
         parser.add_option("-q", "--quiet", action="store_true", dest="quiet",
@@ -757,15 +667,10 @@ Commands:
         if options.quiet:
             logger.setLevel(logging.WARNING)
 
-        username = options.username or os.environ.get('TESTDROID_USERNAME')
-        password = options.password or os.environ.get('TESTDROID_PASSWORD')
-        apikey = options.apikey or os.environ.get('TESTDROID_APIKEY')
-        url = os.environ.get('TESTDROID_URL') or options.url
-
-        self.set_username(username)
-        self.set_password(password)
-        self.set_apikey(apikey)
-        self.set_url(url)
+        if options.apikey is not None:
+            self.set_apikey(options.apikey)
+        if options.url is not None:
+            self.set_url(options.url)
 
         command = commands[args[0]]
         if not command:
