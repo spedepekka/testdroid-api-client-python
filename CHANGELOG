@@ -1,3 +1,7 @@
+3.0.0
+ * Remove username and password authetication
+ * Ability to disable SSL verification
+
 2.6.0
  * Add API Key authentication option
 
